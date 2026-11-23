@@ -6,7 +6,15 @@ import {
   loginUser,
   registerUser,
   updateStatus,
+  getSuggestions,
 } from "./api.js";
+import ImageUpload from "./components/ImageUpload.jsx";
+import MatchSuggestionPanel from "./components/MatchSuggestionPanel.jsx";
+import NotificationCenter from "./components/NotificationCenter.jsx";
+import ClaimModal from "./components/ClaimModal.jsx";
+import ClaimReviewModal from "./components/ClaimReviewModal.jsx";
+import AdminUnresolvedDashboard from "./components/AdminUnresolvedDashboard.jsx";
+import MatchesDrawerModal from "./components/MatchesDrawerModal.jsx";
 
 const initialForm = {
   itemName: "",
@@ -110,6 +118,42 @@ export default function App() {
 
   // Modal Detail State
   const [activeModalItem, setActiveModalItem] = useState(null);
+
+  // New Intelligent Lost & Found States
+  const [claimModalItem, setClaimModalItem] = useState(null);
+  const [claimReviewObj, setClaimReviewObj] = useState(null);
+  const [matchDrawerItem, setMatchDrawerItem] = useState(null);
+  const [liveMatches, setLiveMatches] = useState([]);
+  const [liveSuggestions, setLiveSuggestions] = useState([]);
+  const [dismissMatches, setDismissMatches] = useState(false);
+
+  // Debounced live matching suggestions while typing in report modal
+  useEffect(() => {
+    if (page !== "report" || !form.itemName.trim()) {
+      setLiveMatches([]);
+      setLiveSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await getSuggestions({
+          q: form.itemName,
+          type: form.type,
+          category: form.category,
+          location: form.location
+        });
+        if (res.success) {
+          setLiveMatches(res.matches || []);
+          setLiveSuggestions(res.suggestions || []);
+          setDismissMatches(false);
+        }
+      } catch (err) {
+        console.warn("Live suggestions lookup error:", err);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [form.itemName, form.type, form.category, form.location, page]);
 
   // Video State
   const [isMuted, setIsMuted] = useState(true);
@@ -267,13 +311,39 @@ export default function App() {
       });
       return;
     }
-    try {
-      await createItem(form);
-      setForm(initialForm);
+
+    // Mandatory image validation for Found items
+    if (form.type === "Found" && (!form.imageUrl || !form.imageUrl.trim())) {
       setMessage({
-        type: "success",
-        text: "Your report has been published to the campus board!",
+        type: "danger",
+        text: "Uploading a photograph is mandatory when reporting a found item. This helps the rightful owner identify their belongings.",
       });
+      return;
+    }
+
+    try {
+      const payload = {
+        ...form,
+        userId: user ? user.email : form.contact.trim(),
+        reporterName: user ? user.name : ""
+      };
+      const result = await createItem(payload);
+      setForm(initialForm);
+      setLiveMatches([]);
+      setLiveSuggestions([]);
+
+      if (result.matchCount && result.matchCount > 0) {
+        setMessage({
+          type: "success",
+          text: `🎉 Report published! We detected ${result.matchCount} potential matching campus reports and sent notifications.`,
+        });
+      } else {
+        setMessage({
+          type: "success",
+          text: "Your report has been published to the campus board!",
+        });
+      }
+
       setPage("home");
       await loadItems();
     } catch (err) {
@@ -416,6 +486,28 @@ export default function App() {
           >
             <i className="bi bi-plus-lg" /> Report
           </button>
+
+          {/* Real-time Notification Center Bell */}
+          <NotificationCenter
+            user={user}
+            onNavigateToItem={(itemId) => {
+              const target = items.find((i) => String(i._id) === String(itemId));
+              if (target) {
+                setActiveModalItem(target);
+              }
+            }}
+            onOpenClaimReview={(claimId, notif) => {
+              setClaimReviewObj({
+                _id: claimId,
+                foundItemId: notif.relatedItemId,
+                claimantName: notif.data?.claimantEmail?.split("@")[0] || "Student",
+                claimantEmail: notif.data?.claimantEmail || "",
+                verificationDetails: notif.message,
+                status: "pending",
+                createdAt: notif.createdAt
+              });
+            }}
+          />
 
           {/* User Profile / Login Button */}
           {user ? (
@@ -685,6 +777,8 @@ export default function App() {
                           onStatus={handleStatusChange}
                           onDelete={handleDelete}
                           isAdmin={isAdmin}
+                          onClaim={(it) => setClaimModalItem(it)}
+                          onMatches={(it) => setMatchDrawerItem(it)}
                         />
                       ))}
                   </div>
@@ -721,6 +815,8 @@ export default function App() {
                           onStatus={handleStatusChange}
                           onDelete={handleDelete}
                           isAdmin={isAdmin}
+                          onClaim={(it) => setClaimModalItem(it)}
+                          onMatches={(it) => setMatchDrawerItem(it)}
                         />
                       ))}
                   </div>
@@ -753,6 +849,8 @@ export default function App() {
                             onStatus={handleStatusChange}
                             onDelete={handleDelete}
                             isAdmin={isAdmin}
+                            onClaim={(it) => setClaimModalItem(it)}
+                            onMatches={(it) => setMatchDrawerItem(it)}
                           />
                         ))}
                     </div>
@@ -798,6 +896,8 @@ export default function App() {
                     onStatus={handleStatusChange}
                     onDelete={handleDelete}
                     isAdmin={isAdmin}
+                    onClaim={(it) => setClaimModalItem(it)}
+                    onMatches={(it) => setMatchDrawerItem(it)}
                   />
                 ))}
               </div>
@@ -817,6 +917,27 @@ export default function App() {
               Fill in the details below to broadcast your report across campus.
             </p>
 
+            {/* Live Intelligent Matching Suggestion Panel */}
+            {!dismissMatches && (
+              <MatchSuggestionPanel
+                type={form.type}
+                matches={liveMatches}
+                suggestions={liveSuggestions}
+                onSelectSuggestion={(s) => {
+                  setForm((prev) => ({
+                    ...prev,
+                    itemName: s.itemName,
+                    category: s.category || prev.category,
+                    location: s.location || prev.location,
+                  }));
+                }}
+                onViewMatch={(mItem) => {
+                  setMatchDrawerItem(mItem);
+                }}
+                onDismiss={() => setDismissMatches(true)}
+              />
+            )}
+
             <form onSubmit={submitReport}>
               {/* Type Switcher */}
               <div className="netflix-input-group">
@@ -825,14 +946,20 @@ export default function App() {
                   <button
                     type="button"
                     className={`netflix-type-tab ${form.type === "Lost" ? "selected lost" : ""}`}
-                    onClick={() => setForm({ ...form, type: "Lost" })}
+                    onClick={() => {
+                      setForm({ ...form, type: "Lost" });
+                      setDismissMatches(false);
+                    }}
                   >
                     <i className="bi bi-search" /> Lost Item
                   </button>
                   <button
                     type="button"
                     className={`netflix-type-tab ${form.type === "Found" ? "selected found" : ""}`}
-                    onClick={() => setForm({ ...form, type: "Found" })}
+                    onClick={() => {
+                      setForm({ ...form, type: "Found" });
+                      setDismissMatches(false);
+                    }}
                   >
                     <i className="bi bi-box-seam" /> Found Item
                   </button>
@@ -846,9 +973,10 @@ export default function App() {
                   className="netflix-input"
                   placeholder="e.g. Sony WH-1000XM4 Headphones"
                   value={form.itemName}
-                  onChange={(e) =>
-                    setForm({ ...form, itemName: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setForm({ ...form, itemName: e.target.value });
+                    setDismissMatches(false);
+                  }}
                   required
                 />
               </div>
@@ -928,21 +1056,12 @@ export default function App() {
                 />
               </div>
 
-              {/* Optional Image */}
-              <div className="netflix-input-group">
-                <label className="netflix-input-label">
-                  Photo URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  className="netflix-input"
-                  placeholder="https://images.unsplash.com/..."
-                  value={form.imageUrl}
-                  onChange={(e) =>
-                    setForm({ ...form, imageUrl: e.target.value })
-                  }
-                />
-              </div>
+              {/* Image Upload Component (Mandatory for Found, Optional for Lost) */}
+              <ImageUpload
+                type={form.type}
+                imageUrl={form.imageUrl}
+                onChange={(url) => setForm({ ...form, imageUrl: url })}
+              />
 
               <div className="d-flex gap-3 mt-4">
                 <button type="submit" className="btn-netflix-submit">
@@ -1245,6 +1364,13 @@ export default function App() {
                   </p>
                 )}
               </div>
+
+              {/* PART 7: Dedicated Unresolved Lost Items Dashboard */}
+              <AdminUnresolvedDashboard
+                onViewItem={(item) => setActiveModalItem(item)}
+                onViewMatches={(item) => setMatchDrawerItem(item)}
+                onStatusUpdated={loadItems}
+              />
             </div>
           ) : (
             /* Student / Guest Restricted Screen */
@@ -1424,6 +1550,24 @@ export default function App() {
               <div className="netflix-modal-hero-title">
                 <h2>{activeModalItem.itemName}</h2>
                 <div className="d-flex align-items-center gap-2">
+                  {activeModalItem.type === "Found" && activeModalItem.status !== "Returned" && (
+                    <button
+                      className="btn-netflix-play d-flex align-items-center gap-1"
+                      onClick={() => setClaimModalItem(activeModalItem)}
+                    >
+                      <i className="bi bi-shield-check" />
+                      Request Claim
+                    </button>
+                  )}
+
+                  <button
+                    className="btn-netflix-gray d-flex align-items-center gap-1"
+                    onClick={() => setMatchDrawerItem(activeModalItem)}
+                  >
+                    <i className="bi bi-stars text-success" />
+                    Possible Matches
+                  </button>
+
                   <button
                     className="btn-netflix-white"
                     onClick={() =>
@@ -1509,6 +1653,34 @@ export default function App() {
         </div>
       )}
 
+      {/* Claim Modal */}
+      {claimModalItem && (
+        <ClaimModal
+          item={claimModalItem}
+          user={user}
+          onClose={() => setClaimModalItem(null)}
+          onSuccess={loadItems}
+        />
+      )}
+
+      {/* Claim Verification Review Modal */}
+      {claimReviewObj && (
+        <ClaimReviewModal
+          claim={claimReviewObj}
+          onClose={() => setClaimReviewObj(null)}
+          onUpdated={loadItems}
+        />
+      )}
+
+      {/* Intelligent Matches Drawer Modal */}
+      {matchDrawerItem && (
+        <MatchesDrawerModal
+          item={matchDrawerItem}
+          onClose={() => setMatchDrawerItem(null)}
+          onRequestClaim={(item) => setClaimModalItem(item)}
+        />
+      )}
+
       {/* ---------------- Netflix Minimal Footer ---------------- */}
       <footer className="netflix-footer">
         <p>Questions? Contact Campus Administration or Security.</p>
@@ -1557,7 +1729,7 @@ export default function App() {
 }
 
 // Netflix Item Card Subcomponent with Soft 3D Hover & 16:9 Aspect Ratio
-function NetflixCard({ item, onOpen, onStatus, onDelete, isAdmin }) {
+function NetflixCard({ item, onOpen, onStatus, onDelete, isAdmin, onClaim, onMatches }) {
   const displayImg = getItemImage(item);
 
   return (
@@ -1578,8 +1750,18 @@ function NetflixCard({ item, onOpen, onStatus, onDelete, isAdmin }) {
 
       <div className="netflix-card-info">
         <div className="netflix-card-meta">
-          <span className="match-score">98% Match</span>
-          <span className="age-badge">NEW</span>
+          {item.matchCount > 0 ? (
+            <span className="match-score text-success d-flex align-items-center gap-1">
+              <i className="bi bi-stars" /> {item.matchCount} Match{item.matchCount > 1 ? "es" : ""}
+            </span>
+          ) : (
+            <span className="match-score">Active</span>
+          )}
+          {item.needsAttention && (
+            <span className="badge bg-warning text-dark" style={{ fontSize: "10px" }}>
+              Needs Attention
+            </span>
+          )}
           <span style={{ color: "#888", fontSize: "11px" }}>
             {new Date(item.date).toLocaleDateString()}
           </span>
@@ -1597,6 +1779,30 @@ function NetflixCard({ item, onOpen, onStatus, onDelete, isAdmin }) {
           className="netflix-card-actions"
           onClick={(e) => e.stopPropagation()}
         >
+          {/* Claim Action for Found items */}
+          {item.type === "Found" && item.status !== "Returned" && onClaim && (
+            <button
+              className="btn-icon-circle"
+              style={{ backgroundColor: "rgba(229, 9, 20, 0.2)", borderColor: "#e50914" }}
+              title="Request Claim / Verify Ownership"
+              onClick={() => onClaim(item)}
+            >
+              <i className="bi bi-shield-check text-danger" />
+            </button>
+          )}
+
+          {/* View Matches if available */}
+          {item.matchCount > 0 && onMatches && (
+            <button
+              className="btn-icon-circle"
+              style={{ backgroundColor: "rgba(70, 211, 105, 0.2)", borderColor: "#46d369" }}
+              title="View Potential Matches"
+              onClick={() => onMatches(item)}
+            >
+              <i className="bi bi-stars text-success" />
+            </button>
+          )}
+
           <button
             className="btn-icon-circle btn-icon-play"
             title="Email Reporter on Gmail"

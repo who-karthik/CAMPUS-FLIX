@@ -1,13 +1,55 @@
 import express from "express";
 import mongoose from "mongoose";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import Item from "../models/Item.js";
+import { findMatches, calculateMatch } from "../services/matcher.js";
+import { notifyPotentialMatches, sendNotification } from "../services/notificationService.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadsDir = path.join(__dirname, "..", "uploads");
+
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Multer Storage Configuration
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, `item-${uniqueSuffix}${ext}`);
+  }
+});
+
+const fileFilter = (_req, file, cb) => {
+  const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+  if (allowed.includes(file.mimetype.toLowerCase())) {
+    cb(null, true);
+  } else {
+    cb(new Error("Only JPG, JPEG, PNG, and WEBP image formats are supported."), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
+  fileFilter
+});
 
 const router = express.Router();
 const validId = (id) => mongoose.Types.ObjectId.isValid(id);
+const isDbConnected = () => mongoose.connection.readyState === 1;
 
-let memoryItems = [
+export let memoryItems = [
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340001",
     itemName: "Scientific Calculator (Casio fx-991EX)",
     type: "Lost",
     category: "Electronics",
@@ -16,24 +58,30 @@ let memoryItems = [
     date: new Date().toISOString().slice(0, 10),
     contact: "priya.sharma@mitaoe.ac.in",
     imageUrl: "/images/calculator.jpg",
+    imageRequired: false,
     status: "Open",
+    matchCount: 0,
+    needsAttention: false,
     createdAt: new Date(Date.now() - 1800000).toISOString()
   },
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340002",
     itemName: "Black Leather Bi-Fold Wallet",
     type: "Lost",
     category: "Accessories",
     description: "Black Tommy Hilfiger leather wallet with student ID card and college bus pass inside.",
     location: "Central Library 2nd Floor",
-    date: new Date().toISOString().slice(0, 10),
+    date: new Date(Date.now() - 86400000 * 2).toISOString().slice(0, 10),
     contact: "rahul.patil@mitaoe.ac.in",
     imageUrl: "/images/wallet.jpg",
+    imageRequired: false,
     status: "Open",
-    createdAt: new Date(Date.now() - 3600000).toISOString()
+    matchCount: 0,
+    needsAttention: false,
+    createdAt: new Date(Date.now() - 86400000 * 2).toISOString()
   },
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340003",
     itemName: "Stainless Steel Thermal Water Bottle",
     type: "Found",
     category: "Other",
@@ -42,11 +90,14 @@ let memoryItems = [
     date: new Date().toISOString().slice(0, 10),
     contact: "security@mitaoe.ac.in",
     imageUrl: "/images/bottle.jpg",
+    imageRequired: true,
     status: "Open",
+    matchCount: 1,
+    needsAttention: false,
     createdAt: new Date(Date.now() - 7200000).toISOString()
   },
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340004",
     itemName: "Sony Wireless Over-Ear Headphones",
     type: "Found",
     category: "Electronics",
@@ -55,11 +106,14 @@ let memoryItems = [
     date: new Date().toISOString().slice(0, 10),
     contact: "security@mitaoe.ac.in",
     imageUrl: "/images/headphones.jpg",
+    imageRequired: true,
     status: "Open",
+    matchCount: 0,
+    needsAttention: false,
     createdAt: new Date(Date.now() - 10800000).toISOString()
   },
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340005",
     itemName: "Campus Hostel Room Keys with MITAOE Lanyard",
     type: "Found",
     category: "Keys",
@@ -68,24 +122,30 @@ let memoryItems = [
     date: new Date(Date.now() - 86400000).toISOString().slice(0, 10),
     contact: "hostel.warden@mitaoe.ac.in",
     imageUrl: "/images/keys.jpg",
+    imageRequired: true,
     status: "Claimed",
+    matchCount: 0,
+    needsAttention: false,
     createdAt: new Date(Date.now() - 86400000).toISOString()
   },
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340006",
     itemName: "Waterproof Laptop Backpack (Charcoal Gray)",
     type: "Lost",
     category: "Bags",
     description: "American Tourister gray backpack containing a 15-inch laptop sleeve and notes binder.",
     location: "Sports Ground Bleachers",
-    date: new Date(Date.now() - 86400000).toISOString().slice(0, 10),
+    date: new Date(Date.now() - 86400000 * 8).toISOString().slice(0, 10),
     contact: "amit.kulkarni@mitaoe.ac.in",
     imageUrl: "/images/backpack.jpg",
+    imageRequired: false,
     status: "Open",
-    createdAt: new Date(Date.now() - 90000000).toISOString()
+    matchCount: 0,
+    needsAttention: true,
+    createdAt: new Date(Date.now() - 86400000 * 8).toISOString()
   },
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340007",
     itemName: "Advanced Engineering Mathematics (Erwin Kreyszig)",
     type: "Found",
     category: "Books",
@@ -94,26 +154,69 @@ let memoryItems = [
     date: new Date(Date.now() - 172800000).toISOString().slice(0, 10),
     contact: "library.desk@mitaoe.ac.in",
     imageUrl: "/images/book.jpg",
+    imageRequired: true,
     status: "Returned",
+    matchCount: 0,
+    needsAttention: false,
     createdAt: new Date(Date.now() - 172800000).toISOString()
   },
   {
-    _id: new mongoose.Types.ObjectId().toString(),
+    _id: "672465e1d71cb30012340008",
     itemName: "Fitness Smart Watch with Black Silicone Band",
     type: "Lost",
     category: "Electronics",
     description: "Black digital fitness tracker with cracked screen protector. Lost during gym workout.",
     location: "Campus Gymnasium",
-    date: new Date(Date.now() - 172800000).toISOString().slice(0, 10),
+    date: new Date(Date.now() - 86400000 * 15).toISOString().slice(0, 10),
     contact: "rohan.deshmukh@mitaoe.ac.in",
     imageUrl: "/images/watch.jpg",
+    imageRequired: false,
     status: "Returned",
-    createdAt: new Date(Date.now() - 180000000).toISOString()
+    matchCount: 0,
+    needsAttention: false,
+    createdAt: new Date(Date.now() - 86400000 * 15).toISOString()
   }
 ];
 
-const isDbConnected = () => mongoose.connection.readyState === 1;
+/**
+ * POST /api/items/upload-image
+ * Mandatory Found item and optional Lost item image upload
+ */
+router.post("/upload-image", (req, res) => {
+  upload.single("image")(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({
+          success: false,
+          message: "Image file exceeds maximum allowed size of 5 MB."
+        });
+      }
+      return res.status(400).json({ success: false, message: err.message });
+    } else if (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
 
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No image file provided. Please choose a JPG, PNG, or WEBP file."
+      });
+    }
+
+    const relativeUrl = `/uploads/${req.file.filename}`;
+    res.status(201).json({
+      success: true,
+      message: "Image uploaded successfully",
+      imageUrl: relativeUrl,
+      filename: req.file.filename,
+      size: req.file.size
+    });
+  });
+});
+
+/**
+ * GET /api/items
+ */
 router.get("/", async (req, res, next) => {
   try {
     const { type, q, status } = req.query;
@@ -150,10 +253,15 @@ router.get("/", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+/**
+ * GET /api/items/:id
+ */
 router.get("/:id", async (req, res, next) => {
   try {
-    if (!validId(req.params.id)) return res.status(400).json({ success: false, message: "Invalid item ID" });
-    if (isDbConnected()) {
+    if (!validId(req.params.id) && !memoryItems.some((i) => String(i._id) === req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid item ID" });
+    }
+    if (isDbConnected() && validId(req.params.id)) {
       const item = await Item.findById(req.params.id);
       if (!item) return res.status(404).json({ success: false, message: "Item not found" });
       return res.json({ success: true, data: item });
@@ -165,20 +273,33 @@ router.get("/:id", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+/**
+ * POST /api/items
+ * Reports a new Lost or Found item with image requirement validation and matching
+ */
 router.post("/", async (req, res, next) => {
   try {
     const required = ["itemName", "type", "category", "description", "location", "date", "contact"];
     const missing = required.filter((key) => !String(req.body[key] ?? "").trim());
-    if (missing.length) return res.status(400).json({ success: false, message: `Required fields: ${missing.join(", ")}` });
-    if (!["Lost", "Found"].includes(req.body.type)) return res.status(400).json({ success: false, message: "Type must be Lost or Found" });
-
-    if (isDbConnected()) {
-      const item = await Item.create(req.body);
-      return res.status(201).json({ success: true, data: item });
+    if (missing.length) {
+      return res.status(400).json({ success: false, message: `Required fields: ${missing.join(", ")}` });
+    }
+    if (!["Lost", "Found"].includes(req.body.type)) {
+      return res.status(400).json({ success: false, message: "Type must be Lost or Found" });
     }
 
-    const newItem = {
-      _id: new mongoose.Types.ObjectId().toString(),
+    // MANDATORY IMAGE CHECK FOR FOUND ITEMS
+    if (req.body.type === "Found") {
+      const imageGiven = req.body.imageUrl && String(req.body.imageUrl).trim().length > 0;
+      if (!imageGiven) {
+        return res.status(400).json({
+          success: false,
+          message: "Uploading a photograph is mandatory when reporting a found item. This helps the rightful owner identify their belongings."
+        });
+      }
+    }
+
+    const itemData = {
       itemName: req.body.itemName.trim(),
       type: req.body.type,
       category: req.body.category.trim(),
@@ -187,25 +308,75 @@ router.post("/", async (req, res, next) => {
       date: req.body.date,
       contact: req.body.contact.trim(),
       imageUrl: req.body.imageUrl?.trim() || "",
+      imageRequired: req.body.type === "Found",
       status: req.body.status && ["Open", "Claimed", "Returned"].includes(req.body.status) ? req.body.status : "Open",
+      userId: req.body.userId || req.body.contact.trim().toLowerCase(),
+      reporterName: req.body.reporterName || "",
+      matchCount: 0,
+      needsAttention: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    memoryItems.unshift(newItem);
-    res.status(201).json({ success: true, data: newItem });
+
+    let createdItem = null;
+
+    if (isDbConnected()) {
+      createdItem = await Item.create(itemData);
+    } else {
+      createdItem = {
+        _id: new mongoose.Types.ObjectId().toString(),
+        ...itemData
+      };
+      memoryItems.unshift(createdItem);
+    }
+
+    // TRIGGER INTELLIGENT MATCHING & REAL-TIME NOTIFICATIONS
+    try {
+      let candidateItems = [];
+      const oppositeType = createdItem.type === "Lost" ? "Found" : "Lost";
+
+      if (isDbConnected()) {
+        candidateItems = await Item.find({ type: oppositeType, status: { $ne: "Returned" } });
+      } else {
+        candidateItems = memoryItems.filter((i) => i.type === oppositeType && i.status !== "Returned");
+      }
+
+      const matches = findMatches(createdItem, candidateItems);
+      const significantMatches = matches.filter((m) => m.confidenceScore >= 60);
+
+      if (significantMatches.length > 0) {
+        createdItem.matchCount = significantMatches.length;
+        if (isDbConnected()) {
+          await Item.findByIdAndUpdate(createdItem._id, { matchCount: significantMatches.length });
+        }
+
+        // Notify matching users in background
+        await notifyPotentialMatches(createdItem, significantMatches);
+      }
+    } catch (matchErr) {
+      console.warn("Matching check error:", matchErr.message);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: createdItem,
+      matchCount: createdItem.matchCount || 0
+    });
   } catch (error) {
     if (error.name === "ValidationError") return res.status(400).json({ success: false, message: error.message });
     next(error);
   }
 });
 
+/**
+ * PUT /api/items/:id
+ */
 router.put("/:id", async (req, res, next) => {
   try {
-    if (!validId(req.params.id)) return res.status(400).json({ success: false, message: "Invalid item ID" });
     const allowed = ["itemName", "type", "category", "description", "location", "date", "contact", "imageUrl", "status"];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
 
-    if (isDbConnected()) {
+    if (isDbConnected() && validId(req.params.id)) {
       const item = await Item.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
       if (!item) return res.status(404).json({ success: false, message: "Item not found" });
       return res.json({ success: true, data: item });
@@ -218,30 +389,59 @@ router.put("/:id", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+/**
+ * PATCH /api/items/:id/status
+ */
 router.patch("/:id/status", async (req, res, next) => {
   try {
-    if (!validId(req.params.id)) return res.status(400).json({ success: false, message: "Invalid item ID" });
-    if (!["Open", "Claimed", "Returned"].includes(req.body.status)) return res.status(400).json({ success: false, message: "Invalid status" });
-
-    if (isDbConnected()) {
-      const item = await Item.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true, runValidators: true });
-      if (!item) return res.status(404).json({ success: false, message: "Item not found" });
-      return res.json({ success: true, data: item });
+    if (!["Open", "Claimed", "Returned"].includes(req.body.status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
     }
 
-    const index = memoryItems.findIndex((i) => String(i._id) === req.params.id);
-    if (index === -1) return res.status(404).json({ success: false, message: "Item not found" });
-    memoryItems[index].status = req.body.status;
-    memoryItems[index].updatedAt = new Date().toISOString();
-    res.json({ success: true, data: memoryItems[index] });
+    let updated = null;
+
+    if (isDbConnected() && validId(req.params.id)) {
+      updated = await Item.findByIdAndUpdate(
+        req.params.id,
+        { status: req.body.status },
+        { new: true, runValidators: true }
+      );
+    } else {
+      const index = memoryItems.findIndex((i) => String(i._id) === req.params.id);
+      if (index !== -1) {
+        memoryItems[index].status = req.body.status;
+        memoryItems[index].updatedAt = new Date().toISOString();
+        updated = memoryItems[index];
+      }
+    }
+
+    if (!updated) return res.status(404).json({ success: false, message: "Item not found" });
+
+    // If marked as Returned, notify owner and conclude case
+    if (req.body.status === "Returned") {
+      const ownerEmail = (updated.contact || updated.userId || "").toLowerCase().trim();
+      if (ownerEmail) {
+        await sendNotification({
+          userId: ownerEmail,
+          userEmail: ownerEmail,
+          title: "Item Case Resolved - Marked as Returned",
+          message: `Great news! Your ${updated.type.toLowerCase()} item "${updated.itemName}" has been successfully marked as Returned. Thank you for using CampusFlix!`,
+          type: "item_returned",
+          relatedItemId: updated._id
+        });
+      }
+    }
+
+    res.json({ success: true, data: updated });
   } catch (error) { next(error); }
 });
 
+/**
+ * DELETE /api/items/:id
+ */
 router.delete("/:id", async (req, res, next) => {
   try {
-    if (!validId(req.params.id)) return res.status(400).json({ success: false, message: "Invalid item ID" });
-
-    if (isDbConnected()) {
+    if (isDbConnected() && validId(req.params.id)) {
       const item = await Item.findByIdAndDelete(req.params.id);
       if (!item) return res.status(404).json({ success: false, message: "Item not found" });
       return res.json({ success: true, message: "Report deleted" });

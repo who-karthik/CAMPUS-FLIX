@@ -30,6 +30,13 @@ yarn-error.log*
 *.sln
 *.sw?
 
+# Uploads
+uploads/*
+!uploads/.gitkeep
+**/uploads/*
+!**/uploads/.gitkeep
+
 # OS metadata
 .DS_Store
 Thumbs.db
+
