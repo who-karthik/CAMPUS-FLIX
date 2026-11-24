@@ -11,7 +11,9 @@ import matchRoutes from "./routes/matches.js";
 import notificationRoutes from "./routes/notifications.js";
 import claimRoutes from "./routes/claims.js";
 import reminderRoutes from "./routes/reminders.js";
+import analyticsRoutes from "./routes/analytics.js";
 import { initReminderScheduler } from "./services/reminderScheduler.js";
+import { rateLimiter } from "./middleware/rateLimiter.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +23,7 @@ const app = express();
 
 app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173" }));
 app.use(express.json({ limit: "5mb" }));
+app.use("/api", rateLimiter({ windowMs: 15 * 60 * 1000, max: 300 }));
 
 // Serve uploaded images statically
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
@@ -34,10 +37,18 @@ app.get("/api/health", (_req, res) => {
     features: [
       "Mandatory Found Item Image Upload",
       "Intelligent Multi-Factor Matching Engine",
+      "Smart Match Factor Explanations",
+      "Duplicate Report Detection",
+      "Campus Live Activity Feed",
+      "Student Personal Dashboard",
+      "Interactive Campus Map",
+      "QR-Based Secure Claim Handover",
+      "Configurable Notification Preferences",
       "Real-Time In-App Notification Center",
       "Automated Day 1/3/7/14 Unresolved Reminders",
       "Claim Verification Workflow",
-      "Admin Unresolved Case Management"
+      "Admin Unresolved Case Management",
+      "Database-Driven Admin Analytics"
     ]
   });
 });
@@ -49,6 +60,7 @@ app.use("/api/matches", matchRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/claims", claimRoutes);
 app.use("/api/admin/reminders", reminderRoutes);
+app.use("/api/admin/analytics", analyticsRoutes);
 
 // Error Handling Middleware
 app.use((err, _req, res, _next) => {

@@ -160,6 +160,29 @@ export default function MatchesDrawerModal({
                             style={{ width: `${match.confidenceScore}%` }}
                           ></div>
                         </div>
+
+                        {/* Phase 2: Smart Match Explanation Reasons & Disclaimer */}
+                        <div className="mt-2 p-2 rounded bg-black small border border-secondary border-opacity-25">
+                          <div className="text-warning small fw-semibold mb-1" style={{ fontSize: "0.74rem" }}>
+                            <i className="bi bi-lightbulb-fill me-1"></i> Match Explanation:
+                          </div>
+                          <ul className="mb-1 ps-3 text-light-emphasis small" style={{ fontSize: "0.74rem" }}>
+                            {match.explanation?.reasons?.map((reason, rIdx) => (
+                              <li key={rIdx}>{reason}</li>
+                            )) || (
+                              <>
+                                {(match.matchingFactors?.nameScore || 0) >= 60 && <li>Similar item names detected</li>}
+                                {(match.matchingFactors?.categoryScore || 0) >= 50 && <li>Category compatibility confirmed</li>}
+                                {(match.matchingFactors?.descriptionScore || 0) >= 30 && <li>Matching descriptive details</li>}
+                                {(match.matchingFactors?.locationScore || 0) >= 40 && <li>Reported in proximity or same campus zone</li>}
+                                {(match.matchingFactors?.dateScore || 0) >= 60 && <li>Dates reported in close temporal proximity</li>}
+                              </>
+                            )}
+                          </ul>
+                          <div className="text-muted" style={{ fontSize: "0.7rem" }}>
+                            ⚠️ <em>Match similarity does not prove ownership. Formal claim verification required at Campus Security Desk.</em>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );

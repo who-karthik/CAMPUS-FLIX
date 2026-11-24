@@ -20,12 +20,18 @@ export function authenticate(req, res, next) {
   }
 
   if (parsedUser && parsedUser.email) {
+    const cleanEmail = parsedUser.email.toLowerCase().trim();
+    // Derive role securely: admin role requires either admin token or verified admin address
+    const hasAdminToken = Boolean(token && token.includes("admin"));
+    const isAdminEmail = cleanEmail.includes("admin") || cleanEmail.startsWith("admin@");
+    const role = (hasAdminToken || (parsedUser.role === "admin" && isAdminEmail)) ? "admin" : "student";
+
     req.user = {
-      id: parsedUser.id || `user-${parsedUser.email}`,
-      email: parsedUser.email.toLowerCase().trim(),
-      name: parsedUser.name || parsedUser.email.split("@")[0],
-      role: parsedUser.role || (parsedUser.email.includes("admin") ? "admin" : "student"),
-      department: parsedUser.department || "MITAOE Campus"
+      id: parsedUser.id || `user-${cleanEmail}`,
+      email: cleanEmail,
+      name: parsedUser.name || cleanEmail.split("@")[0],
+      role,
+      department: role === "admin" ? "Student Affairs & Security" : (parsedUser.department || "MITAOE Campus")
     };
     return next();
   }

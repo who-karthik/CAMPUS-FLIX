@@ -26,6 +26,8 @@ const itemSchema = new mongoose.Schema({
 
 // Optimize query indexes
 itemSchema.index({ type: 1, status: 1 });
+itemSchema.index({ userId: 1, contact: 1 });
+itemSchema.index({ createdAt: -1 });
 itemSchema.index({ itemName: "text", description: "text", location: "text" });
 
 export default mongoose.model("Item", itemSchema);

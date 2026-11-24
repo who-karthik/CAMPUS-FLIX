@@ -12,6 +12,14 @@ const claimSchema = new mongoose.Schema({
     enum: ["pending", "approved", "rejected"],
     default: "pending"
   },
+  claimReference: { type: String, unique: true, sparse: true, index: true },
+  handoverStatus: {
+    type: String,
+    enum: ["pending_handover", "handed_over", "cancelled"],
+    default: null
+  },
+  handoverBy: { type: String, default: "" },
+  handoverAt: { type: Date, default: null },
   reviewedBy: { type: String, default: "" },
   reviewNotes: { type: String, default: "" }
 }, { timestamps: true });

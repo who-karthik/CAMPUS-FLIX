@@ -6,6 +6,8 @@ import {
   getReminderHistory
 } from "../api";
 import { openGmailCompose } from "../App";
+import AdminAnalyticsDashboard from "./AdminAnalyticsDashboard.jsx";
+import ClaimHandoverVerificationModal from "./ClaimHandoverVerificationModal.jsx";
 
 export default function AdminUnresolvedDashboard({
   onViewItem,
@@ -19,6 +21,8 @@ export default function AdminUnresolvedDashboard({
   const [actionMessage, setActionMessage] = useState("");
   const [reminderHistoryOpen, setReminderHistoryOpen] = useState(false);
   const [reminderHistoryLogs, setReminderHistoryLogs] = useState([]);
+  const [adminViewTab, setAdminViewTab] = useState("cases"); // cases or analytics
+  const [handoverModalOpen, setHandoverModalOpen] = useState(false);
 
   const loadUnresolvedData = async () => {
     try {
@@ -109,14 +113,21 @@ export default function AdminUnresolvedDashboard({
         <div>
           <h4 className="fw-bold text-light mb-1 d-flex align-items-center gap-2">
             <i className="bi bi-shield-exclamation text-danger"></i>
-            Unresolved Lost Items – Attention Required
+            Campus Case Administration & Oversight
           </h4>
           <p className="text-muted small mb-0">
-            Monitor open lost reports, automated reminder milestones, and trigger administrative case follow-ups.
+            Monitor open lost reports, verify physical claim handovers, and review real-time database intelligence.
           </p>
         </div>
 
-        <div className="d-flex gap-2">
+        <div className="d-flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn btn-sm btn-success d-flex align-items-center gap-1"
+            onClick={() => setHandoverModalOpen(true)}
+          >
+            <i className="bi bi-qr-code-scan"></i> Verify Claim Handover (QR)
+          </button>
           <button
             type="button"
             className="btn btn-sm btn-outline-light d-flex align-items-center gap-1"
@@ -134,11 +145,33 @@ export default function AdminUnresolvedDashboard({
         </div>
       </div>
 
-      {actionMessage && (
-        <div className="alert alert-success py-2 px-3 small d-flex align-items-center gap-2" role="alert">
-          <i className="bi bi-check-circle-fill"></i> {actionMessage}
-        </div>
-      )}
+      {/* Admin Tab Switcher */}
+      <div className="d-flex gap-2 mb-3">
+        <button
+          type="button"
+          className={`btn btn-sm ${adminViewTab === "cases" ? "btn-danger fw-semibold" : "btn-dark text-secondary border-secondary"}`}
+          onClick={() => setAdminViewTab("cases")}
+        >
+          <i className="bi bi-list-check me-1"></i> Unresolved Lost Cases ({summary.total})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${adminViewTab === "analytics" ? "btn-danger fw-semibold" : "btn-dark text-secondary border-secondary"}`}
+          onClick={() => setAdminViewTab("analytics")}
+        >
+          <i className="bi bi-graph-up-arrow me-1"></i> Database Analytics & Trends
+        </button>
+      </div>
+
+      {adminViewTab === "analytics" ? (
+        <AdminAnalyticsDashboard />
+      ) : (
+        <>
+          {actionMessage && (
+            <div className="alert alert-success py-2 px-3 small d-flex align-items-center gap-2" role="alert">
+              <i className="bi bi-check-circle-fill"></i> {actionMessage}
+            </div>
+          )}
 
       {/* KPI Priority Summary Counters */}
       <div className="row g-2 mb-3">
@@ -448,6 +481,19 @@ export default function AdminUnresolvedDashboard({
             </div>
           </div>
         </div>
+      )}
+        </>
+      )}
+
+      {/* Claim Handover Verification Modal (Phase 7) */}
+      {handoverModalOpen && (
+        <ClaimHandoverVerificationModal
+          onClose={() => setHandoverModalOpen(false)}
+          onHandoverCompleted={() => {
+            loadUnresolvedData();
+            if (onStatusUpdated) onStatusUpdated();
+          }}
+        />
       )}
     </div>
   );

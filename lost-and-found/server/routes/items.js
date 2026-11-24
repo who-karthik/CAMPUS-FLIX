@@ -5,8 +5,9 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import Item from "../models/Item.js";
-import { findMatches, calculateMatch } from "../services/matcher.js";
+import { findMatches, calculateMatch, findDuplicates } from "../services/matcher.js";
 import { notifyPotentialMatches, sendNotification } from "../services/notificationService.js";
+import { authenticate } from "../middleware/auth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +45,7 @@ const upload = multer({
 });
 
 const router = express.Router();
+router.use(authenticate);
 const validId = (id) => mongoose.Types.ObjectId.isValid(id);
 const isDbConnected = () => mongoose.connection.readyState === 1;
 
@@ -369,6 +371,52 @@ router.post("/", async (req, res, next) => {
 });
 
 /**
+ * POST /api/items/check-duplicate
+ * Checks if a potentially duplicate report already exists (Phase 3)
+ */
+router.post("/check-duplicate", async (req, res, next) => {
+  try {
+    const { itemName, type, category, description, location, date } = req.body;
+    if (!itemName?.trim()) {
+      return res.json({ success: true, isDuplicate: false, count: 0, duplicates: [] });
+    }
+
+    let candidates = [];
+    if (isDbConnected()) {
+      candidates = await Item.find({
+        type: type || "Lost",
+        status: { $ne: "Returned" }
+      }).limit(100);
+    } else {
+      candidates = memoryItems.filter(
+        (i) => i.type === (type || "Lost") && i.status !== "Returned"
+      );
+    }
+
+    const tempItem = {
+      itemName: itemName.trim(),
+      type: type || "Lost",
+      category: category?.trim() || "Other",
+      description: description?.trim() || "",
+      location: location?.trim() || "",
+      date: date || new Date()
+    };
+
+    const duplicates = findDuplicates(tempItem, candidates);
+    res.json({
+      success: true,
+      isDuplicate: duplicates.length > 0,
+      hasDuplicate: duplicates.length > 0,
+      count: duplicates.length,
+      duplicates,
+      existingItem: duplicates[0]?.item || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * PUT /api/items/:id
  */
 router.put("/:id", async (req, res, next) => {
@@ -376,14 +424,34 @@ router.put("/:id", async (req, res, next) => {
     const allowed = ["itemName", "type", "category", "description", "location", "date", "contact", "imageUrl", "status"];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
 
+    // Fetch existing item for ownership check
+    let existing = null;
+    if (isDbConnected() && validId(req.params.id)) {
+      existing = await Item.findById(req.params.id);
+    } else {
+      existing = memoryItems.find((i) => String(i._id) === req.params.id);
+    }
+
+    if (!existing) return res.status(404).json({ success: false, message: "Item not found" });
+
+    // Strict ownership verification: students can only edit their own reports
+    if (req.user && req.user.role !== "admin") {
+      const userEmail = (req.user.email || "").toLowerCase().trim();
+      const ownerEmail = (existing.contact || existing.userId || "").toLowerCase().trim();
+      if (userEmail && ownerEmail && userEmail !== ownerEmail) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not authorized to edit reports belonging to other users."
+        });
+      }
+    }
+
     if (isDbConnected() && validId(req.params.id)) {
       const item = await Item.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-      if (!item) return res.status(404).json({ success: false, message: "Item not found" });
       return res.json({ success: true, data: item });
     }
 
     const index = memoryItems.findIndex((i) => String(i._id) === req.params.id);
-    if (index === -1) return res.status(404).json({ success: false, message: "Item not found" });
     memoryItems[index] = { ...memoryItems[index], ...updates, updatedAt: new Date().toISOString() };
     res.json({ success: true, data: memoryItems[index] });
   } catch (error) { next(error); }
@@ -441,15 +509,37 @@ router.patch("/:id/status", async (req, res, next) => {
  */
 router.delete("/:id", async (req, res, next) => {
   try {
+    // Fetch existing item for ownership check
+    let existing = null;
     if (isDbConnected() && validId(req.params.id)) {
-      const item = await Item.findByIdAndDelete(req.params.id);
-      if (!item) return res.status(404).json({ success: false, message: "Item not found" });
+      existing = await Item.findById(req.params.id);
+    } else {
+      existing = memoryItems.find((i) => String(i._id) === req.params.id);
+    }
+
+    if (!existing) return res.status(404).json({ success: false, message: "Item not found" });
+
+    // Strict ownership verification: students can only delete their own reports
+    if (req.user && req.user.role !== "admin") {
+      const userEmail = (req.user.email || "").toLowerCase().trim();
+      const ownerEmail = (existing.contact || existing.userId || "").toLowerCase().trim();
+      if (userEmail && ownerEmail && userEmail !== ownerEmail) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not authorized to delete reports belonging to other users."
+        });
+      }
+    }
+
+    if (isDbConnected() && validId(req.params.id)) {
+      await Item.findByIdAndDelete(req.params.id);
       return res.json({ success: true, message: "Report deleted" });
     }
 
     const index = memoryItems.findIndex((i) => String(i._id) === req.params.id);
-    if (index === -1) return res.status(404).json({ success: false, message: "Item not found" });
-    memoryItems.splice(index, 1);
+    if (index !== -1) {
+      memoryItems.splice(index, 1);
+    }
     res.json({ success: true, message: "Report deleted" });
   } catch (error) { next(error); }
 });

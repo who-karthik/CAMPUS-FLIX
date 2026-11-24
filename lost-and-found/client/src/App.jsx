@@ -7,6 +7,8 @@ import {
   registerUser,
   updateStatus,
   getSuggestions,
+  checkFormMatches,
+  checkDuplicateReport
 } from "./api.js";
 import ImageUpload from "./components/ImageUpload.jsx";
 import MatchSuggestionPanel from "./components/MatchSuggestionPanel.jsx";
@@ -15,6 +17,11 @@ import ClaimModal from "./components/ClaimModal.jsx";
 import ClaimReviewModal from "./components/ClaimReviewModal.jsx";
 import AdminUnresolvedDashboard from "./components/AdminUnresolvedDashboard.jsx";
 import MatchesDrawerModal from "./components/MatchesDrawerModal.jsx";
+import DuplicateWarningModal from "./components/DuplicateWarningModal.jsx";
+import CampusLiveActivityFeed from "./components/CampusLiveActivityFeed.jsx";
+import CampusMap from "./components/CampusMap.jsx";
+import StudentDashboard from "./components/StudentDashboard.jsx";
+import QRCodeModal from "./components/QRCodeModal.jsx";
 
 const initialForm = {
   itemName: "",
@@ -123,37 +130,71 @@ export default function App() {
   const [claimModalItem, setClaimModalItem] = useState(null);
   const [claimReviewObj, setClaimReviewObj] = useState(null);
   const [matchDrawerItem, setMatchDrawerItem] = useState(null);
-  const [liveMatches, setLiveMatches] = useState([]);
-  const [liveSuggestions, setLiveSuggestions] = useState([]);
+
+  // Phase 1: Explicit Manual Matching States
+  const [matchingLoading, setMatchingLoading] = useState(false);
+  const [hasCheckedMatches, setHasCheckedMatches] = useState(false);
+  const [explicitMatches, setExplicitMatches] = useState([]);
   const [dismissMatches, setDismissMatches] = useState(false);
 
-  // Debounced live matching suggestions while typing in report modal
-  useEffect(() => {
-    if (page !== "report" || !form.itemName.trim()) {
-      setLiveMatches([]);
-      setLiveSuggestions([]);
+  // Phase 3: Duplicate Report Detection States
+  const [duplicateCandidates, setDuplicateCandidates] = useState([]);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+
+  // Phase 7: QR Code Handover Modal States
+  const [selectedQRClaim, setSelectedQRClaim] = useState(null);
+  const [showQRModal, setShowQRModal] = useState(false);
+
+  // Validate whether all mandatory fields and image (for Found) are completed
+  const isFormCompleteForMatching = useMemo(() => {
+    const hasBase =
+      Boolean(form.itemName && form.itemName.trim()) &&
+      Boolean(form.category && form.category.trim()) &&
+      Boolean(form.description && form.description.trim()) &&
+      Boolean(form.location && form.location.trim()) &&
+      Boolean(form.date) &&
+      Boolean(form.contact && form.contact.trim());
+
+    if (form.type === "Found") {
+      return hasBase && Boolean(form.imageUrl && form.imageUrl.trim());
+    }
+    return hasBase;
+  }, [form]);
+
+  // Phase 1: Explicit Click on "Find Potential Matches"
+  const handleFindPotentialMatches = async () => {
+    if (!isFormCompleteForMatching) {
+      if (form.type === "Found" && (!form.imageUrl || !form.imageUrl.trim())) {
+        setMessage({
+          type: "danger",
+          text: "Uploading a photograph is mandatory for found items before scanning for potential matches."
+        });
+      } else {
+        setMessage({
+          type: "danger",
+          text: "Please complete all mandatory fields before finding potential matches."
+        });
+      }
       return;
     }
-    const timer = setTimeout(async () => {
-      try {
-        const res = await getSuggestions({
-          q: form.itemName,
-          type: form.type,
-          category: form.category,
-          location: form.location
-        });
-        if (res.success) {
-          setLiveMatches(res.matches || []);
-          setLiveSuggestions(res.suggestions || []);
-          setDismissMatches(false);
-        }
-      } catch (err) {
-        console.warn("Live suggestions lookup error:", err);
-      }
-    }, 300);
 
-    return () => clearTimeout(timer);
-  }, [form.itemName, form.type, form.category, form.location, page]);
+    try {
+      setMatchingLoading(true);
+      setDismissMatches(false);
+      const res = await checkFormMatches(form);
+      if (res.success) {
+        setExplicitMatches(res.matches || []);
+        setHasCheckedMatches(true);
+      }
+    } catch (err) {
+      setMessage({
+        type: "danger",
+        text: err.message || "Failed to execute backend matching."
+      });
+    } finally {
+      setMatchingLoading(false);
+    }
+  };
 
   // Video State
   const [isMuted, setIsMuted] = useState(true);
@@ -296,9 +337,9 @@ export default function App() {
     setPage("home");
   };
 
-  // Submit new report
-  const submitReport = async (e) => {
-    e.preventDefault();
+  // Submit new report with Phase 3 Duplicate Detection
+  const submitReport = async (e, force = false) => {
+    if (e) e.preventDefault();
     if (
       !form.itemName.trim() ||
       !form.description.trim() ||
@@ -321,6 +362,20 @@ export default function App() {
       return;
     }
 
+    // Phase 3: Check for potential duplicate reports before persisting
+    if (!force) {
+      try {
+        const dupRes = await checkDuplicateReport(form);
+        if (dupRes.success && dupRes.isDuplicate && dupRes.duplicates?.length > 0) {
+          setDuplicateCandidates(dupRes.duplicates);
+          setShowDuplicateModal(true);
+          return;
+        }
+      } catch (dupErr) {
+        console.warn("Duplicate report check warning:", dupErr.message);
+      }
+    }
+
     try {
       const payload = {
         ...form,
@@ -329,8 +384,10 @@ export default function App() {
       };
       const result = await createItem(payload);
       setForm(initialForm);
-      setLiveMatches([]);
-      setLiveSuggestions([]);
+      setExplicitMatches([]);
+      setHasCheckedMatches(false);
+      setDismissMatches(false);
+      setShowDuplicateModal(false);
 
       if (result.matchCount && result.matchCount > 0) {
         setMessage({
@@ -444,6 +501,24 @@ export default function App() {
               Found Items ({stats.found})
             </button>
           </li>
+          <li>
+            <button
+              className={`netflix-nav-link ${page === "map" ? "active" : ""}`}
+              onClick={() => navTo("map")}
+            >
+              Campus Map
+            </button>
+          </li>
+          {user && (
+            <li>
+              <button
+                className={`netflix-nav-link ${page === "dashboard" ? "active" : ""}`}
+                onClick={() => navTo("dashboard")}
+              >
+                My Dashboard
+              </button>
+            </li>
+          )}
           {user && user.role === "admin" && (
             <li>
               <button
@@ -544,8 +619,23 @@ export default function App() {
                   )}
                   <button
                     className="netflix-dropdown-item"
+                    onClick={() => navTo("dashboard")}
+                  >
+                    <i className="bi bi-person-workspace text-info" /> My Dashboard
+                  </button>
+                  <button
+                    className="netflix-dropdown-item"
+                    onClick={() => navTo("map")}
+                  >
+                    <i className="bi bi-geo-alt-fill text-warning" /> Campus Map
+                  </button>
+                  <button
+                    className="netflix-dropdown-item"
                     onClick={() => {
                       setForm(initialForm);
+                      setExplicitMatches([]);
+                      setHasCheckedMatches(false);
+                      setDismissMatches(false);
                       navTo("report");
                     }}
                   >
@@ -746,6 +836,9 @@ export default function App() {
               </div>
             ) : (
               <>
+                {/* Phase 4: Campus Live Activity Feed */}
+                <CampusLiveActivityFeed onOpenItem={(item) => setActiveModalItem(item)} />
+
                 {/* Row 1: Lost on Campus */}
                 <div className="netflix-row">
                   <div className="netflix-row-header">
@@ -856,9 +949,36 @@ export default function App() {
                     </div>
                   </div>
                 )}
+
+                {/* Phase 6: Interactive Campus Schematic Map on Homepage */}
+                <CampusMap items={items} onOpenItem={(item) => setActiveModalItem(item)} />
               </>
             )}
           </>
+        )}
+
+        {/* ---------------- CAMPUS MAP VIEW ---------------- */}
+        {page === "map" && (
+          <div className="netflix-row mt-4">
+            <CampusMap items={items} onOpenItem={(item) => setActiveModalItem(item)} />
+          </div>
+        )}
+
+        {/* ---------------- STUDENT DASHBOARD VIEW ---------------- */}
+        {page === "dashboard" && (
+          <div className="netflix-row mt-4">
+            <StudentDashboard
+              user={user}
+              items={items}
+              onOpenItem={(it) => setActiveModalItem(it)}
+              onMatches={(it) => setMatchDrawerItem(it)}
+              onRefresh={loadItems}
+              onOpenQR={(claim) => {
+                setSelectedQRClaim(claim);
+                setShowQRModal(true);
+              }}
+            />
+          </div>
         )}
 
         {/* ---------------- 2. LOST OR FOUND VIEW ---------------- */}
@@ -917,27 +1037,6 @@ export default function App() {
               Fill in the details below to broadcast your report across campus.
             </p>
 
-            {/* Live Intelligent Matching Suggestion Panel */}
-            {!dismissMatches && (
-              <MatchSuggestionPanel
-                type={form.type}
-                matches={liveMatches}
-                suggestions={liveSuggestions}
-                onSelectSuggestion={(s) => {
-                  setForm((prev) => ({
-                    ...prev,
-                    itemName: s.itemName,
-                    category: s.category || prev.category,
-                    location: s.location || prev.location,
-                  }));
-                }}
-                onViewMatch={(mItem) => {
-                  setMatchDrawerItem(mItem);
-                }}
-                onDismiss={() => setDismissMatches(true)}
-              />
-            )}
-
             <form onSubmit={submitReport}>
               {/* Type Switcher */}
               <div className="netflix-input-group">
@@ -948,6 +1047,8 @@ export default function App() {
                     className={`netflix-type-tab ${form.type === "Lost" ? "selected lost" : ""}`}
                     onClick={() => {
                       setForm({ ...form, type: "Lost" });
+                      setExplicitMatches([]);
+                      setHasCheckedMatches(false);
                       setDismissMatches(false);
                     }}
                   >
@@ -958,6 +1059,8 @@ export default function App() {
                     className={`netflix-type-tab ${form.type === "Found" ? "selected found" : ""}`}
                     onClick={() => {
                       setForm({ ...form, type: "Found" });
+                      setExplicitMatches([]);
+                      setHasCheckedMatches(false);
                       setDismissMatches(false);
                     }}
                   >
@@ -975,7 +1078,7 @@ export default function App() {
                   value={form.itemName}
                   onChange={(e) => {
                     setForm({ ...form, itemName: e.target.value });
-                    setDismissMatches(false);
+                    setHasCheckedMatches(false);
                   }}
                   required
                 />
@@ -987,9 +1090,10 @@ export default function App() {
                 <select
                   className="netflix-select"
                   value={form.category}
-                  onChange={(e) =>
-                    setForm({ ...form, category: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setForm({ ...form, category: e.target.value });
+                    setHasCheckedMatches(false);
+                  }}
                 >
                   {CATEGORIES.filter((c) => c !== "All").map((c) => (
                     <option key={c} value={c}>
@@ -1007,9 +1111,10 @@ export default function App() {
                   rows="3"
                   placeholder="Color, brand markings, condition, or identifiers..."
                   value={form.description}
-                  onChange={(e) =>
-                    setForm({ ...form, description: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setForm({ ...form, description: e.target.value });
+                    setHasCheckedMatches(false);
+                  }}
                   required
                 />
               </div>
@@ -1021,9 +1126,10 @@ export default function App() {
                   className="netflix-input"
                   placeholder="e.g. Central Library, 2nd Floor Reading Room"
                   value={form.location}
-                  onChange={(e) =>
-                    setForm({ ...form, location: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setForm({ ...form, location: e.target.value });
+                    setHasCheckedMatches(false);
+                  }}
                   required
                 />
               </div>
@@ -1035,7 +1141,10 @@ export default function App() {
                   type="date"
                   className="netflix-input"
                   value={form.date}
-                  onChange={(e) => setForm({ ...form, date: e.target.value })}
+                  onChange={(e) => {
+                    setForm({ ...form, date: e.target.value });
+                    setHasCheckedMatches(false);
+                  }}
                   required
                 />
               </div>
@@ -1049,9 +1158,7 @@ export default function App() {
                   className="netflix-input"
                   placeholder="student@mitaoe.ac.in or phone number"
                   value={form.contact}
-                  onChange={(e) =>
-                    setForm({ ...form, contact: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, contact: e.target.value })}
                   required
                 />
               </div>
@@ -1060,12 +1167,77 @@ export default function App() {
               <ImageUpload
                 type={form.type}
                 imageUrl={form.imageUrl}
-                onChange={(url) => setForm({ ...form, imageUrl: url })}
+                onChange={(url) => {
+                  setForm({ ...form, imageUrl: url });
+                  setHasCheckedMatches(false);
+                }}
               />
+
+              {/* Phase 1: Explicit Matching Trigger Workflow */}
+              <div className="p-3 rounded my-3 bg-black border border-secondary border-opacity-75">
+                <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2 mb-2">
+                  <div>
+                    <div className="fw-semibold text-light small d-flex align-items-center gap-2">
+                      <i className="bi bi-stars text-success fs-5"></i>
+                      <span>Check for Potential Matches Before Submitting</span>
+                    </div>
+                    <div className="text-secondary small" style={{ fontSize: "0.78rem" }}>
+                      {form.type === "Found"
+                        ? "Verify whether a student has already reported losing this item on campus."
+                        : "Verify whether someone has already found and reported this item."}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-outline-success btn-sm d-flex align-items-center justify-content-center gap-2 px-3 py-2 fw-semibold"
+                    disabled={!isFormCompleteForMatching || matchingLoading}
+                    onClick={handleFindPotentialMatches}
+                    style={{ minWidth: "210px" }}
+                  >
+                    {matchingLoading ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm" role="status"></span>
+                        <span>Scanning Database...</span>
+                      </>
+                    ) : (
+                      <>
+                        <i className="bi bi-search"></i>
+                        <span>Find Potential Matches</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {!isFormCompleteForMatching && (
+                  <div className="text-muted small mt-1" style={{ fontSize: "0.74rem" }}>
+                    <i className="bi bi-info-circle me-1 text-warning"></i>
+                    {form.type === "Found"
+                      ? "Complete all required fields and upload a valid photograph to enable potential match scanning."
+                      : "Complete all required fields to enable potential match scanning."}
+                  </div>
+                )}
+
+                {/* Display Matches / Loading / Empty State */}
+                {(matchingLoading || (hasCheckedMatches && !dismissMatches)) && (
+                  <div className="mt-3">
+                    <MatchSuggestionPanel
+                      type={form.type}
+                      matches={explicitMatches}
+                      loading={matchingLoading}
+                      hasSearched={hasCheckedMatches}
+                      onViewMatch={(mItem) => setMatchDrawerItem(mItem)}
+                      onDismiss={() => {
+                        setDismissMatches(true);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
 
               <div className="d-flex gap-3 mt-4">
                 <button type="submit" className="btn-netflix-submit">
-                  Publish Report
+                  Submit {form.type} Item Report
                 </button>
                 <button
                   type="button"
@@ -1678,6 +1850,34 @@ export default function App() {
           item={matchDrawerItem}
           onClose={() => setMatchDrawerItem(null)}
           onRequestClaim={(item) => setClaimModalItem(item)}
+        />
+      )}
+
+      {/* Duplicate Report Warning Modal (Phase 3) */}
+      {showDuplicateModal && duplicateCandidates.length > 0 && (
+        <DuplicateWarningModal
+          duplicates={duplicateCandidates}
+          onViewExisting={(existingItem) => {
+            setShowDuplicateModal(false);
+            setActiveModalItem(existingItem);
+          }}
+          onContinue={() => {
+            setShowDuplicateModal(false);
+            submitReport(null, true);
+          }}
+          onClose={() => setShowDuplicateModal(false)}
+        />
+      )}
+
+      {/* QR Code Handover Modal (Phase 7) */}
+      {showQRModal && selectedQRClaim && (
+        <QRCodeModal
+          claim={selectedQRClaim}
+          item={items.find((i) => String(i._id) === String(selectedQRClaim.foundItemId))}
+          onClose={() => {
+            setShowQRModal(false);
+            setSelectedQRClaim(null);
+          }}
         />
       )}
 

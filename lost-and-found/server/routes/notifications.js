@@ -1,13 +1,45 @@
 import express from "express";
 import mongoose from "mongoose";
 import Notification from "../models/Notification.js";
-import { memoryNotifications } from "../services/notificationService.js";
+import {
+  memoryNotifications,
+  getUserPreferences,
+  updateUserPreferences
+} from "../services/notificationService.js";
 import { authenticate } from "../middleware/auth.js";
 
 const router = express.Router();
 router.use(authenticate);
 
 const isDbConnected = () => mongoose.connection.readyState === 1;
+
+/**
+ * GET /api/notifications/preferences
+ * Retrieve notification preferences for current user
+ */
+router.get("/preferences", async (req, res, next) => {
+  try {
+    const userIdentifier = getUserIdentifier(req);
+    const prefs = await getUserPreferences(userIdentifier);
+    res.json({ success: true, data: prefs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PUT /api/notifications/preferences
+ * Update notification preferences for current user
+ */
+router.put("/preferences", async (req, res, next) => {
+  try {
+    const userIdentifier = getUserIdentifier(req);
+    const updated = await updateUserPreferences(userIdentifier, req.body);
+    res.json({ success: true, message: "Notification preferences updated", data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * Helper to determine user identifier

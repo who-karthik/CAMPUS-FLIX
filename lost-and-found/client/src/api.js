@@ -50,6 +50,9 @@ export const updateStatus = (id, status) =>
 export const deleteItem = (id) =>
   request(`/items/${id}`, { method: "DELETE" });
 
+export const checkDuplicateReport = (data) =>
+  request("/items/check-duplicate", { method: "POST", body: JSON.stringify(data) });
+
 // Image Upload
 export const uploadItemImage = async (file, onProgress) => {
   const formData = new FormData();
@@ -75,6 +78,9 @@ export const getSuggestions = ({ q = "", type = "Found", category = "", location
   return request(`/matches/suggestions?${params.toString()}`);
 };
 
+export const checkFormMatches = (data) =>
+  request("/matches/check", { method: "POST", body: JSON.stringify(data) });
+
 export const getItemMatches = (id) => request(`/matches/item/${id}`);
 
 export const recalculateMatches = () =>
@@ -96,6 +102,12 @@ export const markAllNotificationsRead = () =>
 export const deleteNotification = (id) =>
   request(`/notifications/${id}`, { method: "DELETE" });
 
+export const getNotificationPreferences = () =>
+  request("/notifications/preferences");
+
+export const updateNotificationPreferences = (prefs) =>
+  request("/notifications/preferences", { method: "PUT", body: JSON.stringify(prefs) });
+
 // Claims
 export const submitClaim = (claimData) =>
   request("/claims", { method: "POST", body: JSON.stringify(claimData) });
@@ -108,7 +120,16 @@ export const updateClaimStatus = (id, status, reviewNotes = "") =>
     body: JSON.stringify({ status, reviewNotes })
   });
 
-// Admin Reminders & Unresolved Cases
+export const verifyClaimReference = (claimRef) =>
+  request(`/claims/verify-ref/${encodeURIComponent(claimRef)}`);
+
+export const completeClaimHandover = (claimReference) =>
+  request("/claims/complete-handover", {
+    method: "POST",
+    body: JSON.stringify({ claimReference })
+  });
+
+// Admin Reminders & Analytics
 export const getAdminReminders = (filter = "all") =>
   request(`/admin/reminders?filter=${filter}`);
 
@@ -117,6 +138,9 @@ export const sendAdminManualReminder = (itemId) =>
 
 export const getReminderHistory = () =>
   request("/admin/reminders/history");
+
+export const getAdminAnalytics = () =>
+  request("/admin/analytics");
 
 // Authentication
 export const loginUser = (credentials) =>

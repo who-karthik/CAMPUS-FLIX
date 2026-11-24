@@ -2,15 +2,85 @@ import express from "express";
 import mongoose from "mongoose";
 import Item from "../models/Item.js";
 import Match from "../models/Match.js";
-import { findMatches, calculateMatch } from "../services/matcher.js";
+import { findMatches, calculateMatch, explainMatchFactors } from "../services/matcher.js";
 import { memoryItems } from "./items.js";
 
 const router = express.Router();
 const isDbConnected = () => mongoose.connection.readyState === 1;
 
 /**
+ * POST /api/matches/check
+ * Explicit manual match query for in-progress report form (Phase 1)
+ * Does NOT send notifications or persist matches.
+ */
+router.post("/check", async (req, res, next) => {
+  try {
+    const {
+      itemName = "",
+      type = "Found",
+      category = "Other",
+      description = "",
+      location = "",
+      date = new Date(),
+      imageUrl = ""
+    } = req.body;
+
+    if (!itemName.trim()) {
+      return res.status(400).json({ success: false, message: "Item title is required to find matches." });
+    }
+
+    if (type === "Found" && (!imageUrl || !String(imageUrl).trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid photograph must be uploaded before finding potential matches for a found item."
+      });
+    }
+
+    const oppositeType = type === "Lost" ? "Found" : "Lost";
+    let candidateItems = [];
+
+    if (isDbConnected()) {
+      candidateItems = await Item.find({
+        type: oppositeType,
+        status: { $ne: "Returned" }
+      });
+    } else {
+      candidateItems = memoryItems.filter(
+        (i) => i.type === oppositeType && i.status !== "Returned"
+      );
+    }
+
+    const tempItem = {
+      itemName: itemName.trim(),
+      type,
+      category: category.trim() || "Other",
+      description: description.trim(),
+      location: location.trim(),
+      date: date || new Date(),
+      imageUrl: imageUrl.trim()
+    };
+
+    const matches = findMatches(tempItem, candidateItems, false);
+    const enrichedMatches = matches.map((m) => ({
+      ...m,
+      explanation: explainMatchFactors(m.matchingFactors)
+    }));
+
+    res.json({
+      success: true,
+      count: enrichedMatches.length,
+      potentialMatchesCount: enrichedMatches.length,
+      matches: enrichedMatches,
+      data: enrichedMatches
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /api/matches/suggestions?q=bottle&type=Found
- * Smart suggestions while the user types in the report form
+ * Smart suggestions while the user queries in the report form
  */
 router.get("/suggestions", async (req, res, next) => {
   try {
@@ -43,6 +113,10 @@ router.get("/suggestions", async (req, res, next) => {
     };
 
     const matches = findMatches(mockItem, candidateItems, true);
+    const enrichedMatches = matches.map((m) => ({
+      ...m,
+      explanation: explainMatchFactors(m.matchingFactors)
+    }));
 
     // Form suggestions (autocomplete pills)
     const suggestions = candidateItems
@@ -59,9 +133,9 @@ router.get("/suggestions", async (req, res, next) => {
 
     res.json({
       success: true,
-      count: matches.length,
-      potentialMatchesCount: matches.length,
-      matches: matches.slice(0, 6),
+      count: enrichedMatches.length,
+      potentialMatchesCount: enrichedMatches.length,
+      matches: enrichedMatches.slice(0, 6),
       suggestions
     });
   } catch (error) {
@@ -92,11 +166,16 @@ router.get("/item/:id", async (req, res, next) => {
     }
 
     const matches = findMatches(targetItem, candidates);
+    const enrichedMatches = matches.map((m) => ({
+      ...m,
+      explanation: explainMatchFactors(m.matchingFactors)
+    }));
+
     res.json({
       success: true,
-      count: matches.length,
+      count: enrichedMatches.length,
       item: targetItem,
-      data: matches
+      data: enrichedMatches
     });
   } catch (error) {
     next(error);

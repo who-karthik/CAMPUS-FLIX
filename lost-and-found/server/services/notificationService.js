@@ -1,11 +1,97 @@
 import mongoose from "mongoose";
 import Notification from "../models/Notification.js";
 import Item from "../models/Item.js";
+import UserPreferences from "../models/UserPreferences.js";
 
-// In-memory store fallback for notifications
+// In-memory store fallback for notifications and preferences
 export const memoryNotifications = [];
+export const memoryUserPreferences = new Map();
 
 const isDbConnected = () => mongoose.connection.readyState === 1;
+
+/**
+ * Get notification preferences for a user
+ */
+export async function getUserPreferences(email = "") {
+  const cleanEmail = String(email).trim().toLowerCase();
+  if (!cleanEmail) {
+    return {
+      potentialMatches: true,
+      unresolvedReminders: true,
+      adminAnnouncements: true,
+      claimUpdates: true,
+      securityAlerts: true
+    };
+  }
+
+  if (isDbConnected()) {
+    try {
+      let pref = await UserPreferences.findOne({ userEmail: cleanEmail });
+      if (!pref) {
+        pref = await UserPreferences.create({ userEmail: cleanEmail });
+      }
+      return {
+        potentialMatches: pref.potentialMatches,
+        unresolvedReminders: pref.unresolvedReminders,
+        adminAnnouncements: pref.adminAnnouncements,
+        claimUpdates: true, // Mandatory
+        securityAlerts: true // Mandatory
+      };
+    } catch (err) {
+      console.warn("Preferences DB read error, using memory fallback:", err.message);
+    }
+  }
+
+  if (!memoryUserPreferences.has(cleanEmail)) {
+    memoryUserPreferences.set(cleanEmail, {
+      potentialMatches: true,
+      unresolvedReminders: true,
+      adminAnnouncements: true,
+      claimUpdates: true,
+      securityAlerts: true
+    });
+  }
+
+  return { ...memoryUserPreferences.get(cleanEmail), claimUpdates: true, securityAlerts: true };
+}
+
+/**
+ * Update notification preferences for a user
+ */
+export async function updateUserPreferences(email = "", updates = {}) {
+  const cleanEmail = String(email).trim().toLowerCase();
+  if (!cleanEmail) throw new Error("User email is required to update notification preferences.");
+
+  const allowedUpdates = {
+    potentialMatches: typeof updates.potentialMatches === "boolean" ? updates.potentialMatches : true,
+    unresolvedReminders: typeof updates.unresolvedReminders === "boolean" ? updates.unresolvedReminders : true,
+    adminAnnouncements: typeof updates.adminAnnouncements === "boolean" ? updates.adminAnnouncements : true,
+    claimUpdates: true, // mandatory - cannot be disabled
+    securityAlerts: true // mandatory - cannot be disabled
+  };
+
+  if (isDbConnected()) {
+    try {
+      const saved = await UserPreferences.findOneAndUpdate(
+        { userEmail: cleanEmail },
+        { ...allowedUpdates, userEmail: cleanEmail },
+        { upsert: true, new: true }
+      );
+      return {
+        potentialMatches: saved.potentialMatches,
+        unresolvedReminders: saved.unresolvedReminders,
+        adminAnnouncements: saved.adminAnnouncements,
+        claimUpdates: true,
+        securityAlerts: true
+      };
+    } catch (err) {
+      console.warn("Preferences DB save error, using memory fallback:", err.message);
+    }
+  }
+
+  memoryUserPreferences.set(cleanEmail, allowedUpdates);
+  return allowedUpdates;
+}
 
 /**
  * Send an in-app notification to a user
@@ -23,6 +109,25 @@ export async function sendNotification({
 }) {
   const recipient = (userId || userEmail || "").trim().toLowerCase();
   if (!recipient) return null;
+
+  // Check user preferences for optional notification types
+  // Mandatory types: claim_request, claim_status, item_returned, admin_alert
+  const prefs = await getUserPreferences(recipient);
+
+  if (
+    (type === "possible_match" || type === "matching_lost_report") &&
+    prefs.potentialMatches === false
+  ) {
+    return null; // User opted out of potential match notifications
+  }
+
+  if (type === "unresolved_reminder" && prefs.unresolvedReminders === false) {
+    return null; // User opted out of unresolved reminders
+  }
+
+  if (type === "admin_announcement" && prefs.adminAnnouncements === false) {
+    return null; // User opted out of administrative announcements
+  }
 
   // Check for duplicate recent notification of same type and item to prevent spam
   if (isDbConnected()) {

@@ -232,3 +232,142 @@ export function findMatches(targetItem, candidateList = [], isLiveTyping = false
     .filter((match) => match.confidenceScore >= (isLiveTyping ? 50 : 60))
     .sort((a, b) => b.confidenceScore - a.confidenceScore);
 }
+
+/**
+ * Generate human-readable explanation for why two items matched
+ * Phase 2: Smart Match Explanation
+ */
+export function explainMatchFactors(matchingFactors = {}) {
+  const {
+    nameScore = 0,
+    categoryScore = 0,
+    descriptionScore = 0,
+    locationScore = 0,
+    dateScore = 0
+  } = matchingFactors;
+
+  const reasons = [];
+
+  if (nameScore >= 80) {
+    reasons.push("Strong item name similarity");
+  } else if (nameScore >= 50) {
+    reasons.push("Similar item names");
+  }
+
+  if (categoryScore === 100) {
+    reasons.push("Same item category");
+  } else if (categoryScore >= 50) {
+    reasons.push("Related category family");
+  }
+
+  if (descriptionScore >= 50) {
+    reasons.push("Highly matching description details");
+  } else if (descriptionScore >= 25) {
+    reasons.push("Similar description keywords");
+  }
+
+  if (locationScore >= 75) {
+    reasons.push("Same campus location or landmark");
+  } else if (locationScore >= 40) {
+    reasons.push("Nearby campus location");
+  }
+
+  if (dateScore >= 80) {
+    reasons.push("Dates are close (within 2 to 5 days)");
+  } else if (dateScore >= 60) {
+    reasons.push("Reported dates within 10 days");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("General contextual similarity across campus reports");
+  }
+
+  return {
+    reasons,
+    disclaimer: "⚠️ Note: Similarity does not prove ownership. Formal claim verification required.",
+    breakdown: {
+      nameScore,
+      categoryScore,
+      descriptionScore,
+      locationScore,
+      dateScore
+    }
+  };
+}
+
+/**
+ * Detect possible duplicate reports of the SAME item type
+ * Phase 3: Duplicate Report Detection
+ */
+export function findDuplicates(targetItem, candidateList = []) {
+  if (!targetItem || !Array.isArray(candidateList)) return [];
+
+  const targetType = targetItem.type || "Lost";
+
+  return candidateList
+    .filter((candidate) => {
+      const sameId = String(candidate._id) === String(targetItem._id);
+      const sameType = candidate.type === targetType;
+      const isNotReturned = candidate.status !== "Returned";
+      return !sameId && sameType && isNotReturned;
+    })
+    .map((candidate) => {
+      const nameScore = stringSimilarity(targetItem.itemName, candidate.itemName);
+      const catScore = categorySimilarity(targetItem.category, candidate.category);
+
+      const descTokensTarget = tokenize(targetItem.description);
+      const descTokensCand = tokenize(candidate.description);
+      const descScore = (descTokensTarget.length && descTokensCand.length)
+        ? Math.round(jaccardSimilarity(descTokensTarget, descTokensCand) * 100)
+        : (nameScore > 65 ? Math.round(nameScore * 0.75) : 0);
+
+      const locScore = (targetItem.location && candidate.location)
+        ? locationSimilarity(targetItem.location, candidate.location)
+        : (nameScore > 65 ? 50 : 0);
+
+      const dateScore = dateProximityScore(targetItem.date, candidate.date);
+
+      // Weighted score for duplicate detection (same weights)
+      const duplicateScore = Math.min(
+        100,
+        Math.max(
+          0,
+          Math.round(
+            nameScore * 0.35 +
+            catScore * 0.20 +
+            descScore * 0.20 +
+            locScore * 0.15 +
+            dateScore * 0.10
+          )
+        )
+      );
+
+      // Sanitize candidate to prevent revealing private contact info or claim details
+      const sanitizedCandidate = {
+        _id: candidate._id,
+        itemName: candidate.itemName,
+        type: candidate.type,
+        category: candidate.category,
+        description: candidate.description,
+        location: candidate.location,
+        date: candidate.date,
+        imageUrl: candidate.imageUrl,
+        status: candidate.status,
+        createdAt: candidate.createdAt
+      };
+
+      return {
+        item: sanitizedCandidate,
+        duplicateScore,
+        matchingFactors: {
+          nameScore,
+          categoryScore: catScore,
+          descriptionScore: descScore,
+          locationScore: locScore,
+          dateScore
+        }
+      };
+    })
+    .filter((dup) => dup.duplicateScore >= 68)
+    .sort((a, b) => b.duplicateScore - a.duplicateScore);
+}

@@ -4,7 +4,9 @@ import {
   getUnreadNotificationCount,
   markNotificationRead,
   markAllNotificationsRead,
-  deleteNotification
+  deleteNotification,
+  getNotificationPreferences,
+  updateNotificationPreferences
 } from "../api";
 
 export default function NotificationCenter({
@@ -17,7 +19,46 @@ export default function NotificationCenter({
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fullModalOpen, setFullModalOpen] = useState(false);
+  const [prefsModalOpen, setPrefsModalOpen] = useState(false);
+  const [preferences, setPreferences] = useState({
+    potentialMatches: true,
+    unresolvedReminders: true,
+    adminAnnouncements: true,
+    claimUpdates: true,
+    securityAlerts: true
+  });
+  const [prefSaving, setPrefSaving] = useState(false);
+  const [prefAlert, setPrefAlert] = useState("");
   const dropdownRef = useRef(null);
+
+  const loadPreferences = async () => {
+    try {
+      const res = await getNotificationPreferences();
+      if (res.success && res.data) setPreferences(res.data);
+    } catch {
+      // silent
+    }
+  };
+
+  const handleSavePreferences = async (e) => {
+    e.preventDefault();
+    try {
+      setPrefSaving(true);
+      setPrefAlert("");
+      const res = await updateNotificationPreferences(preferences);
+      if (res.success) {
+        setPrefAlert("Preferences saved successfully!");
+        setTimeout(() => {
+          setPrefAlert("");
+          setPrefsModalOpen(false);
+        }, 1500);
+      }
+    } catch (err) {
+      setPrefAlert(err.message || "Failed to save preferences");
+    } finally {
+      setPrefSaving(false);
+    }
+  };
 
   const fetchNotificationData = async () => {
     try {
@@ -188,17 +229,31 @@ export default function NotificationCenter({
                 </span>
               )}
             </div>
-            {unreadCount > 0 && (
+            <div className="d-flex align-items-center gap-2">
               <button
                 type="button"
-                className="btn btn-link btn-sm text-decoration-none text-muted p-0"
-                style={{ fontSize: "0.78rem" }}
-                onClick={handleMarkAllRead}
-                disabled={loading}
+                className="btn btn-sm btn-link text-secondary p-0"
+                title="Notification Settings"
+                onClick={() => {
+                  loadPreferences();
+                  setIsOpen(false);
+                  setPrefsModalOpen(true);
+                }}
               >
-                Mark all read
+                <i className="bi bi-gear-fill"></i>
               </button>
-            )}
+              {unreadCount > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-link btn-sm text-decoration-none text-muted p-0"
+                  style={{ fontSize: "0.78rem" }}
+                  onClick={handleMarkAllRead}
+                  disabled={loading}
+                >
+                  Mark all read
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Notification List */}
@@ -423,12 +478,138 @@ export default function NotificationCenter({
               <div className="modal-footer border-secondary">
                 <button
                   type="button"
+                  className="btn btn-outline-light me-auto"
+                  onClick={() => {
+                    loadPreferences();
+                    setPrefsModalOpen(true);
+                  }}
+                >
+                  <i className="bi bi-gear-fill me-1"></i> Notification Preferences
+                </button>
+                <button
+                  type="button"
                   className="btn btn-secondary"
                   onClick={() => setFullModalOpen(false)}
                 >
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification Preferences Modal (Phase 8) */}
+      {prefsModalOpen && (
+        <div
+          className="modal fade show d-block"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.85)", zIndex: 1250 }}
+          tabIndex="-1"
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content bg-dark text-light border-secondary">
+              <div className="modal-header border-secondary">
+                <h5 className="modal-title d-flex align-items-center gap-2 mb-0">
+                  <i className="bi bi-sliders text-danger"></i> Notification Settings
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={() => setPrefsModalOpen(false)}
+                ></button>
+              </div>
+
+              <form onSubmit={handleSavePreferences}>
+                <div className="modal-body p-4">
+                  <p className="small text-secondary mb-3">
+                    Customize your notification preferences. Mandatory security alerts remain active for campus integrity.
+                  </p>
+
+                  <div className="p-3 rounded bg-black border border-secondary mb-3">
+                    <div className="form-check form-switch mb-3">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        id="nc-pref-matches"
+                        checked={preferences.potentialMatches}
+                        onChange={(e) => setPreferences({ ...preferences, potentialMatches: e.target.checked })}
+                      />
+                      <label className="form-check-label text-light fw-semibold small" htmlFor="nc-pref-matches">
+                        Potential Match Notifications (Optional)
+                      </label>
+                      <div className="text-muted" style={{ fontSize: "0.72rem" }}>
+                        Alerts when reported lost or found items match your posts.
+                      </div>
+                    </div>
+
+                    <div className="form-check form-switch mb-3">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        id="nc-pref-reminders"
+                        checked={preferences.unresolvedReminders}
+                        onChange={(e) => setPreferences({ ...preferences, unresolvedReminders: e.target.checked })}
+                      />
+                      <label className="form-check-label text-light fw-semibold small" htmlFor="nc-pref-reminders">
+                        Unresolved Reminders (Day 1, 3, 7, 14) (Optional)
+                      </label>
+                      <div className="text-muted" style={{ fontSize: "0.72rem" }}>
+                        Periodic automated follow-up check-ins for active missing items.
+                      </div>
+                    </div>
+
+                    <div className="form-check form-switch">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        id="nc-pref-admin"
+                        checked={preferences.adminAnnouncements}
+                        onChange={(e) => setPreferences({ ...preferences, adminAnnouncements: e.target.checked })}
+                      />
+                      <label className="form-check-label text-light fw-semibold small" htmlFor="nc-pref-admin">
+                        Administrative Announcements (Optional)
+                      </label>
+                      <div className="text-muted" style={{ fontSize: "0.72rem" }}>
+                        Broadcasts and manual security desk case messages.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded bg-black border border-secondary small text-muted">
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <span>Claim & Verification Updates:</span>
+                      <span className="badge bg-secondary">Mandatory / Locked</span>
+                    </div>
+                    <div className="d-flex justify-content-between align-items-center">
+                      <span>Physical Handover Confirmations:</span>
+                      <span className="badge bg-secondary">Mandatory / Locked</span>
+                    </div>
+                  </div>
+
+                  {prefAlert && (
+                    <div className="alert alert-info py-2 small mt-3 mb-0">
+                      {prefAlert}
+                    </div>
+                  )}
+                </div>
+
+                <div className="modal-footer border-secondary">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setPrefsModalOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-danger"
+                    disabled={prefSaving}
+                  >
+                    {prefSaving ? "Saving..." : "Save Preferences"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
