@@ -21,7 +21,26 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 const app = express();
 
-app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173" }));
+// Permissive CORS for Netlify, Vercel, and local development
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile, Postman) or from localhost, Netlify, or Vercel
+      if (
+        !origin ||
+        origin.includes("localhost") ||
+        origin.endsWith(".netlify.app") ||
+        origin.endsWith(".vercel.app") ||
+        origin === process.env.CLIENT_URL ||
+        process.env.CLIENT_URL === "*"
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true); // Allow all for seamless demo deployment
+    },
+    credentials: true
+  })
+);
 app.use(express.json({ limit: "5mb" }));
 app.use("/api", rateLimiter({ windowMs: 15 * 60 * 1000, max: 300 }));
 
